@@ -17,7 +17,7 @@
 
 面向 [Scripting App](https://scriptingapp.github.io/) 的非官方多平台用量查看应用。在一个项目里管理 Codex、Grok、Claude、Antigravity、Cursor、Kimi Code、GitHub Copilot、Z.ai 与 MiniMax 的多账号用量、主屏幕小组件和自动化刷新。
 
-当前版本：`1.7.3`
+当前版本：`1.7.4`
 
 > 本项目不是 OpenAI、xAI、Anthropic、Google 或 Scripting App 官方产品，与上述平台无隶属或合作关系。
 
@@ -213,6 +213,16 @@ dashboard
 系统限制：单个 App 最多保留 64 条待处理通知，本项目最多排期 48 条；距重置不足 30 秒的窗口不再排期。
 
 延迟触发用的 `TimeIntervalNotificationTrigger` 是运行环境（bridge）暴露的**全局类**，不是 `scripting` 模块的导出成员 —— 官方文档的示例也始终不 import 它。因此代码按「全局 → 模块命名空间」探测后使用，找不到时给出可读错误而不是抛出 `undefined is not a constructor`。
+
+### 长期不开 App 时如何续排
+
+排期只在 App 运行或快捷指令刷新时更新，而一批排期是有限的。如果习惯只看小组件、长期不打开 App，可以加一条快捷指令自动化定期续排：
+
+1. 快捷指令 → 自动化 → 新建 → 选「特定时间」，设一个时间点，重复方式选「每天」，并勾选「立即运行」（否则每次都要手动确认）
+2. 添加操作「运行脚本」（Run Script，后台执行、无界面），目标脚本选本脚本
+3. 想覆盖一天里的多个时段就多建几条 —— iOS 的时间自动化只支持每天 / 每周 / 每月，没有「每 N 小时」
+
+这条自动化会在 App 上下文里跑完整刷新流程：既更新用量数据，也按最新的重置时间重排提醒。执行结果同样会写进运行记录，排期失败时以 `notification.` 开头记录警告，可据此排查。
 
 ## 数据来源
 

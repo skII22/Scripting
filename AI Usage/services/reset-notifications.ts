@@ -44,6 +44,21 @@ type TimeIntervalTriggerConstructor = new (options: {
   repeats: boolean;
 }) => unknown;
 
+/** 触发器构造器的探测结果。origin 用于把「从哪取到的」写进运行记录。 */
+type ResolvedTrigger = {
+  create: TimeIntervalTriggerConstructor | null;
+  origin: string;
+};
+
+/**
+ * 构造器缺失时的说明文案。
+ *
+ * 这段话会被复用三处（排期前置检查、排期循环、测试通知），必须一致：
+ * 明确区分「定时通知不可用」和「通知权限/立即送达」，避免又把人往权限方向带。
+ */
+const TRIGGER_UNAVAILABLE_MESSAGE =
+  "当前 Scripting 版本没有提供 TimeIntervalNotificationTrigger，无法安排定时通知（立即送达的通知不受影响）。";
+
 /**
  * 取 TimeIntervalNotificationTrigger 的构造器。
  *
@@ -100,14 +115,12 @@ type DelayTriggerResult =
   | { ok: false; error: string };
 
 /** 构造「延迟 N 秒触发」的触发器；delaySeconds 必须大于 0。 */
-function createDelayTrigger(delaySeconds: number): DelayTriggerResult {
-  const resolved = resolveTimeIntervalTrigger();
+function buildDelayTrigger(
+  resolved: ResolvedTrigger,
+  delaySeconds: number,
+): DelayTriggerResult {
   if (!resolved.create) {
-    return {
-      ok: false,
-      error:
-        "当前 Scripting 版本没有提供 TimeIntervalNotificationTrigger，无法安排定时通知（立即送达的通知不受影响）。",
-    };
+    return { ok: false, error: TRIGGER_UNAVAILABLE_MESSAGE };
   }
   try {
     const trigger = new resolved.create({
@@ -124,11 +137,16 @@ function createDelayTrigger(delaySeconds: number): DelayTriggerResult {
   }
 }
 
+function createDelayTrigger(delaySeconds: number): DelayTriggerResult {
+  return buildDelayTrigger(resolveTimeIntervalTrigger(), delaySeconds);
+}
+
 /**
- * 清空本脚本已排期的通知。
+ * 清空本脚本已排期的通知（整批）。
  *
- * 目前 AI Usage 只有冷却结束提醒这一种本地通知，因此整批清理是安全且
- * 幂等的；如果以后新增其他类型的通知，需要改为按 userInfo.kind 精确清理
+ * 用在「提醒被关掉」这条路径上：此时语义就是"不再需要任何排期"，整批清理安全且幂等。
+ * 重排路径不走这里，而是用 revokePreviousSchedule 在排成功后精确撤销旧的那批。
+ * 如果以后新增其他类型的本地通知，需要改为按 userInfo.kind 精确清理
  * （排期时已写入 kind: "reset" 便于后续收窄范围）。
  */
 export function cancelResetNotifications(): void {
@@ -136,6 +154,47 @@ export function cancelResetNotifications(): void {
     Notification.removeAllPendingsOfCurrentScript();
   } catch {
     /* 通知接口不可用时静默忽略，不能影响刷新与页面渲染 */
+  }
+}
+
+/**
+ * 读取本脚本当前待发送通知的标识符，用于「先排新的、成功后再撤旧的」这一安全顺序。
+ *
+ * 返回 null 表示当前运行环境读不到（接口不存在或抛错）—— 此时只能退回整批清空。
+ * 接口本身没有文档保证返回结构，所以整段按 unknown 防御性读取，并且用
+ * 可选调用 + try 包住，任何异常都降级成「读不到」而不是中断排期。
+ */
+function readPendingIdentifiers(): string[] | null {
+  const reader = (
+    Notification as unknown as {
+      getAllPendingsOfCurrentScript?: () =>
+        | ReadonlyArray<{ identifier?: unknown }>
+        | null
+        | undefined;
+    }
+  ).getAllPendingsOfCurrentScript;
+  if (typeof reader !== "function") return null;
+  try {
+    const pendings = reader();
+    if (!Array.isArray(pendings)) return null;
+    return pendings
+      .map((request) => request?.identifier)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+/** 撤销上一轮排期：能精确删除就精确删除，否则整批清空。 */
+function revokePreviousSchedule(previousIds: string[] | null): void {
+  try {
+    if (previousIds === null) {
+      Notification.removeAllPendingsOfCurrentScript();
+      return;
+    }
+    if (previousIds.length > 0) Notification.removePendings(previousIds);
+  } catch {
+    /* 同 cancelResetNotifications：失败也不能影响刷新与页面渲染 */
   }
 }
 
@@ -170,12 +229,33 @@ async function runSync(
     return { scheduled: 0, disabled: false, error: errorText(error) };
   }
 
-  // 先清空旧排期再按最新重置时间重排，避免同一窗口出现重复提醒。
-  cancelResetNotifications();
+  // 触发器是整批条目共用的前置条件，必须在动旧排期之前先确认可用。
+  //
+  // 否则在拿不到全局类的运行环境里（intent / widget 等非 App 环境都有可能）
+  // 会「先清空、再失败」，把上一条本来有效的排期也一起抹掉 —— 那比这次没排上更糟：
+  // 用户会连已经排好的提醒都收不到，而且没有任何提示。宁可什么都不动。
+  const resolved = resolveTimeIntervalTrigger();
+  if (!resolved.create) {
+    writeLog({
+      level: "warning",
+      source,
+      category: "settings",
+      event: "notification.trigger_unavailable",
+      message: `冷却结束提醒无法排期：${TRIGGER_UNAVAILABLE_MESSAGE}`,
+    });
+    return {
+      scheduled: 0,
+      disabled: false,
+      error: TRIGGER_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  // 先记下旧排期的标识符，等本轮排完再撤 —— 中途失败时旧排期仍在，不会两头落空。
+  const previousIds = readPendingIdentifiers();
 
   let scheduled = 0;
   for (const item of plan) {
-    const delay = createDelayTrigger(item.delaySeconds);
+    const delay = buildDelayTrigger(resolved, item.delaySeconds);
     if (!delay.ok) {
       writeLog({
         level: "warning",
@@ -212,9 +292,14 @@ async function runSync(
         message: `冷却结束提醒排期失败：${message}`,
       });
       // 大概率是通知权限未开启，继续重试只会重复报错。
+      // 这里直接返回、不撤销旧排期：留着上一批总比什么都没有好。
       return { scheduled, disabled: false, error: message };
     }
   }
+
+  // 只有整批都排成功（含「本轮无需排期」的空计划）才撤旧排期，保证不会出现
+  // 「旧的被删了、新的没排上」的空档；部分失败时旧排期继续兜底，等下次刷新再收敛。
+  if (scheduled === plan.length) revokePreviousSchedule(previousIds);
 
   return { scheduled, disabled: false, error: null };
 }
