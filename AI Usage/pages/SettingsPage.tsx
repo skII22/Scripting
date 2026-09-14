@@ -65,6 +65,7 @@ import { ChangelogPage } from "./ChangelogPage";
 import { AccountDetailPage } from "./AccountDetailPage";
 import { DashboardWidgetSettingsPage } from "./DashboardWidgetSettingsPage";
 import { LogPage } from "./LogPage";
+import { ResetNotificationPage } from "./ResetNotificationPage";
 import type { AuthSheet } from "../models";
 import { listDemoAccounts, listDemoCards } from "../services/demo";
 import {
@@ -102,6 +103,7 @@ type SelectedDestination =
       };
     }
   | { kind: "dashboardWidget" }
+  | { kind: "resetNotification" }
   | { kind: "log" }
   | { kind: "changelog" };
 
@@ -410,6 +412,8 @@ export function SettingsPage(props: {
                 backgroundTheme={props.backgroundTheme}
                 dataSource={props.demoMode ? "demo" : "live"}
               />
+            ) : selectedDestination?.kind === "resetNotification" ? (
+              <ResetNotificationPage backgroundTheme={props.backgroundTheme} />
             ) : selectedDestination?.kind === "log" ? (
               <LogPage backgroundTheme={props.backgroundTheme} />
             ) : selectedDestination?.kind === "changelog" ? (
@@ -800,9 +804,31 @@ export function SettingsPage(props: {
               </HStack>
             </Button>
             <GlassDivider />
+            <Button
+              buttonStyle="plain"
+              frame={{ maxWidth: "infinity" }}
+              action={() =>
+                setSelectedDestination({ kind: "resetNotification" })
+              }
+            >
+              <HStack
+                padding={{ vertical: true }}
+                frame={{ minHeight: 44, maxWidth: "infinity" }}
+                contentShape="rect"
+              >
+                <Text>已排期提醒</Text>
+                <Spacer />
+                <Image
+                  systemName="chevron.right"
+                  imageScale="medium"
+                  foregroundStyle="secondaryLabel"
+                />
+              </HStack>
+            </Button>
+            <GlassDivider />
             <GlassNoteRow
               text={
-                "• 开启后，App 启动、回到前台或刷新完成时会按最新重置时间重新排期，每个额度窗口只保留一条提醒。\n• 提醒范围：每个账号最近一次重置最安静；全部额度窗口会为 5 小时与每周额度各发一条；仅告急窗口只提醒剩余不高于 15% 的额度。\n• 点按通知会打开 AI Usage。通知完全在本机排期，不需要联网；未收到请到「设置 > 通知 > Scripting」允许通知。"
+                "• 开启后，App 启动、回到前台或刷新完成时会按最新重置时间重新排期，每个额度窗口只保留一条提醒。\n• 提醒范围：每个账号最近一次重置最安静；全部额度窗口会为 5 小时与每周额度各发一条；仅告急窗口只提醒剩余不高于 15% 的额度。\n• 「已排期提醒」可以查看当前实际排了哪些、什么时候响，并可手动重排。\n• 点按通知会打开 AI Usage。通知完全在本机排期，不需要联网；未收到请到「设置 > 通知 > Scripting」允许通知。"
               }
             />
           </GlassGroup>
