@@ -13,6 +13,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { StatusPage } from "./pages/StatusPage";
 import { isDemoMode, setDemoMode } from "./services/demo";
 import { ensureAllMigrations } from "./services/hub";
+import { syncResetNotifications } from "./services/reset-notifications";
 import {
   getAppDisplaySettings,
   setAppBackgroundTheme,
@@ -31,6 +32,11 @@ function App() {
     ensureAllMigrations();
   }, []);
 
+  // 启动即按最新的重置时间重排冷却提醒；未开启提醒时等价于清空排期。
+  useEffect(() => {
+    void syncResetNotifications();
+  }, []);
+
   useEffect(() => {
     let wasBackground = false;
     const listener = (phase: ScenePhase) => {
@@ -39,6 +45,8 @@ function App() {
       wasBackground = false;
       invalidateUsageRuntime();
       setOverviewRevision((value) => value + 1);
+      // 回到前台时用量与重置时间可能已变化，重新排期一次。
+      void syncResetNotifications();
     };
     AppEvents.scenePhase.addListener(listener);
     return () => AppEvents.scenePhase.removeListener(listener);

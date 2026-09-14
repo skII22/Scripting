@@ -22,6 +22,7 @@ import { UsageCardView } from "../components/UsageCardView";
 import { type AuthSheet, type ProviderId, type UsageCard } from "../models";
 import { parseMinimaxAuthChoice } from "../providers/minimax/auth-choice";
 import { refreshAccounts } from "../services/refresh";
+import { syncResetNotifications } from "../services/reset-notifications";
 import {
   requestWidgetReload,
   requestWidgetReloadAfterStorage,
@@ -197,6 +198,7 @@ export function StatusPage(props: {
       // 账号并发刷新完成后再发一次 reload 请求，避免逐账号顺序等待，
       // 也避免 Dashboard 缓存已更新但主屏幕仍持有旧时间线。
       if (!cancelled && summary.succeeded > 0) requestWidgetReload();
+      if (!cancelled) void syncResetNotifications();
     })().catch(() => {
       /* 启动静默刷新失败时保留当前缓存和页面。 */
     });
@@ -454,6 +456,7 @@ export function StatusPage(props: {
       });
       // 刷新完成即通知 WidgetKit，不把小组件更新绑定在弹窗关闭动作上。
       requestWidgetReload();
+      void syncResetNotifications();
       await Dialog.alert({
         title: summary.failed ? "刷新完成，部分失败" : "刷新成功",
         message: `成功 ${summary.succeeded} 个，失败 ${summary.failed} 个。`,
@@ -483,6 +486,7 @@ export function StatusPage(props: {
       );
       clearCardRefreshState(card.key);
       requestWidgetReload();
+      void syncResetNotifications();
     } catch (error) {
       if (!currentWork()) return;
       setCards((current) =>

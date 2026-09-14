@@ -19,6 +19,8 @@ export type IntentRefreshDependencies = {
   refreshProvider(provider: ProviderId): Promise<RefreshSummary>;
   requestWidgetReload(): boolean;
   writeLog(input: IntentRefreshLog): void;
+  /** 可选：刷新完成后按最新重置时间重排冷却结束提醒 */
+  syncNotifications?: () => void | Promise<void>;
 };
 
 export function createIntentRefreshRunner(
@@ -33,6 +35,12 @@ export function createIntentRefreshRunner(
           ? await dependencies.refreshAll()
           : await dependencies.refreshProvider(scope.provider);
       dependencies.requestWidgetReload();
+      // 提醒排期失败不能影响刷新结果，单独吞掉异常。
+      try {
+        await dependencies.syncNotifications?.();
+      } catch {
+        /* ignore */
+      }
       dependencies.writeLog({
         level: summary.failed ? "warning" : "info",
         source: "intent",

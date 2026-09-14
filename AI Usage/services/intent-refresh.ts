@@ -4,6 +4,7 @@ import {
 } from "./refresh";
 import { writeLog } from "./logger";
 import { requestWidgetReload } from "./widgets";
+import { syncResetNotifications } from "./reset-notifications";
 import { createIntentRefreshRunner } from "./intent-refresh-core";
 
 export const runIntentRefresh = createIntentRefreshRunner({
@@ -13,4 +14,5 @@ export const runIntentRefresh = createIntentRefreshRunner({
     refreshProviderAccounts(provider, { force: true, source: "intent" }),
   requestWidgetReload,
   writeLog,
+  syncNotifications: () => syncResetNotifications({ source: "intent" }),
 });

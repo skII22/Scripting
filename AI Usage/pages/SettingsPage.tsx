@@ -37,6 +37,19 @@ import {
   type BackgroundThemeId,
 } from "../services/settings";
 import {
+  getResetNotificationPreferences,
+  RESET_NOTIFICATION_LEAD_LABELS,
+  RESET_NOTIFICATION_LEAD_OPTIONS,
+  RESET_NOTIFICATION_SCOPE_OPTIONS,
+  setResetNotificationPreferences,
+  type ResetNotificationPreferences,
+  type ResetNotificationScope,
+} from "../services/reset-notification-prefs";
+import {
+  sendResetNotificationTest,
+  syncResetNotifications,
+} from "../services/reset-notifications";
+import {
   GlassDivider,
   GlassGroup,
   GlassNoteRow,
@@ -119,12 +132,40 @@ export function SettingsPage(props: {
   const [dashboardParameterCopied, setDashboardParameterCopied] =
     useState(false);
   const settings = getAppDisplaySettings();
+  const notificationPreferences = getResetNotificationPreferences();
   const dashboardPreferences = getDashboardWidgetPreferences(
     props.demoMode ? "demo" : "live",
   );
 
   function refresh() {
     setTick((value) => value + 1);
+  }
+
+  /** 保存提醒设置并立即按新设置重排（关闭时等价于清空排期）。 */
+  function updateResetNotificationPreferences(
+    patch: Partial<ResetNotificationPreferences>,
+  ) {
+    const result = setResetNotificationPreferences(patch);
+    if (!result.ok) {
+      void showSettingsSaveFailure();
+      refresh();
+      return;
+    }
+    void syncResetNotifications();
+    refresh();
+  }
+
+  async function sendTestNotification() {
+    const result = await sendResetNotificationTest();
+    // 原始错误由服务层给出，页面只负责把结论与下一步拼在一起，
+    // 避免像以前那样不管什么原因都补一句「去开权限」把人带偏。
+    const paragraphs = [result.message];
+    if (result.hint) paragraphs.push(result.hint);
+    await Dialog.alert({
+      title: result.ok ? "测试通知已发出" : "测试通知失败",
+      message: paragraphs.join("\n\n"),
+      buttonLabel: "关闭",
+    });
   }
 
   useEffect(() => {
@@ -683,6 +724,87 @@ export function SettingsPage(props: {
             </Picker>
             <GlassDivider />
             <GlassNoteRow text="控制 App 启动自动刷新与小组件自动联网最短间隔；选「手动」则仅下拉/点刷新时联网。系统实际调度小组件可能延后。" />
+          </GlassGroup>
+        </Section>
+
+        <Section
+          listRowBackground={glassRowBackground}
+          header={<GlassSectionHeader title="通知" />}
+        >
+          <GlassGroup>
+            <Toggle
+              title="冷却结束提醒"
+              value={notificationPreferences.enabled}
+              onChanged={(value: boolean) =>
+                updateResetNotificationPreferences({ enabled: value })
+              }
+              padding={{ vertical: true }}
+              frame={{ minHeight: 44, maxWidth: "infinity" }}
+            />
+            <GlassDivider />
+            <Picker
+              title="提醒范围"
+              value={notificationPreferences.scope}
+              onChanged={(value: string) =>
+                updateResetNotificationPreferences({
+                  scope: value as ResetNotificationScope,
+                })
+              }
+              pickerStyle="menu"
+              padding={{ vertical: true }}
+              frame={{ minHeight: 44, maxWidth: "infinity" }}
+            >
+              {RESET_NOTIFICATION_SCOPE_OPTIONS.map((option) => (
+                <Text key={option.id} tag={option.id}>
+                  {option.title}
+                </Text>
+              ))}
+            </Picker>
+            <GlassDivider />
+            <Picker
+              title="提醒时机"
+              value={String(notificationPreferences.leadMinutes)}
+              onChanged={(value: string) =>
+                updateResetNotificationPreferences({
+                  leadMinutes: Number(value),
+                })
+              }
+              pickerStyle="menu"
+              padding={{ vertical: true }}
+              frame={{ minHeight: 44, maxWidth: "infinity" }}
+            >
+              {RESET_NOTIFICATION_LEAD_OPTIONS.map((minutes) => (
+                <Text key={minutes} tag={String(minutes)}>
+                  {RESET_NOTIFICATION_LEAD_LABELS[minutes]}
+                </Text>
+              ))}
+            </Picker>
+            <GlassDivider />
+            <Button
+              buttonStyle="plain"
+              frame={{ maxWidth: "infinity" }}
+              action={sendTestNotification}
+            >
+              <HStack
+                padding={{ vertical: true }}
+                frame={{ minHeight: 44, maxWidth: "infinity" }}
+                contentShape="rect"
+              >
+                <Text>发送测试通知</Text>
+                <Spacer />
+                <Image
+                  systemName="bell.badge"
+                  imageScale="medium"
+                  foregroundStyle="accentColor"
+                />
+              </HStack>
+            </Button>
+            <GlassDivider />
+            <GlassNoteRow
+              text={
+                "• 开启后，App 启动、回到前台或刷新完成时会按最新重置时间重新排期，每个额度窗口只保留一条提醒。\n• 提醒范围：每个账号最近一次重置最安静；全部额度窗口会为 5 小时与每周额度各发一条；仅告急窗口只提醒剩余不高于 15% 的额度。\n• 点按通知会打开 AI Usage。通知完全在本机排期，不需要联网；未收到请到「设置 > 通知 > Scripting」允许通知。"
+              }
+            />
           </GlassGroup>
         </Section>
 
